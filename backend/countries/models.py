@@ -36,4 +36,4 @@ class CountryMetric(models.Model):
         ]
 
     def __str__(self) -> str:  # pragma: no cover
-        return f"{self.country.code} {self.year}"
+        return f"{self.country.name} {self.year}"
