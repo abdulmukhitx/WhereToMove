@@ -122,3 +122,66 @@ def refresh_metrics(request):
         pass
 
     return Response({"updated": count}, status=status.HTTP_200_OK)
+
+
+@api_view(["GET"])
+def country_metrics_null(request):
+    """Return metric records from DB/cache where at least one metric is null.
+
+    Query params:
+      - years: integer, number of recent years to include (default: 10)
+      - code: ISO-3 country code to filter results (optional)
+    """
+    years_param = request.query_params.get("years")
+    code_filter = request.query_params.get("code")
+
+    try:
+        last_n_years = int(years_param) if years_param is not None else 10
+        if last_n_years <= 0 or last_n_years > 100:
+            last_n_years = 10
+    except (TypeError, ValueError):
+        last_n_years = 10
+
+    # Use a distinct cache key for null-filtered data
+    cache_key = f"country_metrics_null:{last_n_years}:{(code_filter or '*').upper()}"
+    data = cache.get(cache_key)
+
+    if data is None:
+        # Fetch from DB with the any_null=True filter
+        data = get_metrics_from_db(
+            last_n_years=last_n_years,
+            code_filter=(code_filter or None),
+            any_null=True,
+        )
+        cache.set(cache_key, data, CACHE_TIMEOUT)
+
+    if code_filter:
+        code_filter = code_filter.strip().upper()
+        data = [row for row in data if str(row.get("code", "")).upper() == code_filter]
+
+    data = _sanitize_records_for_json(data)
+
+    return Response(data, status=status.HTTP_200_OK)
+
+
+@api_view(["POST"])
+def refresh_country_metrics(request):
+    """Force a remote fetch and refresh the database and cache."""
+    years_param = request.query_params.get("years")
+    try:
+        last_n_years = int(years_param) if years_param is not None else 10
+        if last_n_years <= 0 or last_n_years > 100:
+            last_n_years = 10
+    except (TypeError, ValueError):
+        last_n_years = 10
+
+    count = refresh_remote_and_persist(last_n_years=last_n_years)
+
+    # Bust caches related to this years window
+    try:
+        cache.delete_pattern(CACHE_KEY_ALL.format(years=last_n_years, code="*"))
+        cache.delete_pattern(f"country_metrics_null:{last_n_years}:*")
+    except Exception:
+        pass
+
+    return Response({"updated": count}, status=status.HTTP_200_OK)

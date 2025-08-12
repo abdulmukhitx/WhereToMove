@@ -31,9 +31,9 @@ class CountryMetric(models.Model):
         constraints = [
             models.UniqueConstraint(fields=["country", "year"], name="uniq_country_year"),
         ]
-    
         indexes = [
             models.Index(fields=["country", "year"], name="idx_country_year"),
         ]
+
     def __str__(self) -> str:  # pragma: no cover
-        return f"{self.country} {self.year}"
+        return f"{self.country.code} {self.year}"

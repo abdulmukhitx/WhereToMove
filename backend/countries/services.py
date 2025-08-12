@@ -9,12 +9,11 @@ import requests
 import numpy as np
 import math
 
-from django.db import transaction
-from django.db.models import F
+from django.db import transaction, DataError
+from django.db.models import F, Q
 from django.apps import apps
 
-# Candidate Grapher variable slugs for each metric. We will try them in order until one works.
-# Prefer commonly used OWID Grapher slugs over raw source codes.
+
 METRICS_SLUGS: Dict[str, List[str]] = {
     # GDP per capita, PPP preferred; fall back to World Bank GDP per capita if PPP unavailable
     "gdp_ppp_per_capita": [
@@ -500,7 +499,8 @@ def _split_records(records: List[Dict]) -> Tuple[Dict[str, str], List[Dict]]:
         code = (r.get("code") or "").strip()
         name = (r.get("country") or "").strip()
         year = r.get("year")
-        if not code or not isinstance(year, (int, float)):
+        # Ensure code is a valid 3-char ISO code before processing
+        if not code or len(code) != 3 or not isinstance(year, (int, float)):
             continue
         if name:
             countries[code] = name
@@ -615,8 +615,23 @@ def upsert_metrics_from_records(records: List[Dict]) -> int:
     return count
 
 
-def get_metrics_from_db(last_n_years: int = 10, code_filter: Optional[str] = None) -> List[Dict]:
-    """Read metrics from the database and return JSON-like list of dicts."""
+def get_metrics_from_db(
+    last_n_years: int = 10,
+    code_filter: Optional[str] = None,
+    strict_not_null: bool = False,
+    any_null: bool = False,
+) -> List[Dict[str, Any]]:
+    """Fetch records from the DB, optionally filtering.
+
+    Args:
+        last_n_years: How many recent years of data to fetch.
+        code_filter: Optional ISO-3 country code to filter by.
+        strict_not_null: If True, only return records where all key metrics are non-null.
+        any_null: If True, only return records where at least one key metric is null.
+
+    Returns:
+        A list of dictionaries, each representing a country-year metric record.
+    """
     current_year = datetime.utcnow().year
     year_min = current_year - (last_n_years - 1)
 
@@ -629,9 +644,24 @@ def get_metrics_from_db(last_n_years: int = 10, code_filter: Optional[str] = Non
     if code_filter:
         qs = qs.filter(country__code=code_filter)
 
-    # Use plain field names for existing fields to avoid annotation conflicts.
-    # Alias only related fields.
-    values = qs.values(
+    if strict_not_null:
+        # All metric fields must be non-null
+        for metric in METRICS_SLUGS:
+            if metric:
+                qs = qs.filter(**{f"{metric}__isnull": False})
+
+    if any_null:
+        # Any metric field is null
+        null_filter = Q()
+        for metric in METRICS_SLUGS:
+            if metric:
+                null_filter |= Q(**{f"{metric}__isnull": True})
+        qs = qs.filter(null_filter)
+
+    # Order by country name and year descending
+    qs = qs.order_by("country__name", "-year")
+
+    values_qs = qs.values(
         "year",
         "gdp_ppp_per_capita",
         "life_expectancy",
@@ -643,14 +673,17 @@ def get_metrics_from_db(last_n_years: int = 10, code_filter: Optional[str] = Non
         "corruption_index",
         code=F("country__code"),
         country_name=F("country__name"),
-    )
+    ).order_by("country__code", "year")
 
-    data = list(values.order_by("code", "year"))
-    # Sanitize for JSON safety
+    try:
+        data = list(values_qs)
+    except DataError as e:  # pragma: no cover
+        logger.error("DataError fetching metrics: %s", e)
+        return []
+
     df = pd.DataFrame(data)
     if df.empty:
         return []
-    # Rename for API compatibility
     df = df.rename(columns={"country_name": "country"})
     return _json_sanitize_records(df)
 
