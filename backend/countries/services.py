@@ -3,7 +3,6 @@ import logging
 import time
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple, Any
-
 import pandas as pd
 import requests
 import numpy as np
@@ -95,6 +94,175 @@ WB_HEADERS = {
 _WB_COUNTRIES_CACHE: Optional[Dict[str, str]] = None
 
 logger = logging.getLogger(__name__)
+
+
+# Historical data sources URLs
+FREEDOM_HOUSE_ALL_DATA_2013_2024 = "https://freedomhouse.org/sites/default/files/2024-02/All_data_FIW_2013-2024.xlsx"
+FREEDOM_HOUSE_PRESS_HISTORICAL = "https://freedomhouse.org/sites/default/files/2020-02/FOTP1980-FOTP2017_Public-Data.xlsx"
+
+def _fetch_freedom_house_historical() -> Optional[pd.DataFrame]:
+    """Download and parse Freedom House historical data (2013-2024) for freedom of speech and democracy."""
+    try:
+        # Download Excel file
+        df = pd.read_excel(FREEDOM_HOUSE_ALL_DATA_2013_2024, sheet_name=0)
+        
+        # The Excel contains multiple metrics, focus on relevant ones for our use case
+        # Columns might include: Country, Year, PR (Political Rights), CL (Civil Liberties), etc.
+        # We'll map these to our freedom_of_speech_index and democracy_index
+        
+        # Rename columns to match our format
+        df = df.rename(columns={
+            "Country/Territory": "Entity",
+            "Year": "Year",
+            "CL": "civil_liberties",  # For freedom of speech proxy
+            "PR": "political_rights",  # For democracy proxy
+        })
+        
+        # Filter to 2016-2024 range to match our database
+        df = df[(df["Year"] >= 2016) & (df["Year"] <= 2024)]
+        
+        # Create normalized indices (Freedom House uses 1-7 scale, lower is better)
+        # Convert to 0-1 scale where higher is better
+        if "civil_liberties" in df.columns:
+            df["freedom_of_speech_index"] = (8 - df["civil_liberties"]) / 7.0
+        if "political_rights" in df.columns:
+            df["democracy_index"] = (8 - df["political_rights"]) / 7.0
+            
+        return df[["Entity", "Year", "freedom_of_speech_index", "democracy_index"]].dropna(subset=["Entity", "Year"])
+        
+    except Exception as e:
+        logger.warning("Failed to fetch/parse Freedom House historical data: %s", e)
+        return None
+
+
+def _fetch_transparency_international_historical() -> Optional[pd.DataFrame]:
+    """Get Transparency International CPI 2024 data (hardcoded from official website)."""
+    try:
+        logger.info("Loading TI CPI 2024 data (hardcoded from official source)")
+        
+        # TI CPI 2024 data extracted from https://www.transparency.org/en/cpi/2024
+        # Score scale: 0-100 (higher is better, less corrupt)
+        cpi_data_2024 = {
+            'Denmark': 90, 'Finland': 88, 'Singapore': 84, 'New Zealand': 83,
+            'Luxembourg': 81, 'Norway': 81, 'Switzerland': 81, 'Sweden': 80,
+            'Netherlands': 78, 'Australia': 77, 'Iceland': 77, 'Ireland': 77,
+            'Estonia': 76, 'Uruguay': 76, 'Canada': 75, 'Germany': 75,
+            'Hong Kong': 74, 'Bhutan': 72, 'Seychelles': 72, 'Japan': 71,
+            'United Kingdom': 71, 'Belgium': 69, 'Barbados': 68, 'United Arab Emirates': 68,
+            'Austria': 67, 'France': 67, 'Taiwan': 67, 'Bahamas': 65,
+            'United States of America': 65, 'Israel': 64, 'South Korea': 64,
+            'Chile': 63, 'Lithuania': 63, 'Saint Vincent and the Grenadines': 63,
+            'Cabo Verde': 62, 'Dominica': 60, 'Slovenia': 60, 'Latvia': 59,
+            'Qatar': 59, 'Saint Lucia': 59, 'Saudi Arabia': 59, 'Costa Rica': 58,
+            'Botswana': 57, 'Portugal': 57, 'Rwanda': 57, 'Cyprus': 56,
+            'Czechia': 56, 'Grenada': 56, 'Spain': 56, 'Fiji': 55, 'Oman': 55,
+            'Italy': 54, 'Bahrain': 53, 'Georgia': 53, 'Poland': 53,
+            'Mauritius': 51, 'Malaysia': 50, 'Vanuatu': 50, 'Greece': 49,
+            'Jordan': 49, 'Namibia': 49, 'Slovakia': 49, 'Armenia': 47,
+            'Croatia': 47, 'Kuwait': 46, 'Malta': 46, 'Montenegro': 46,
+            'Romania': 46, 'Benin': 45, 'Côte d\'Ivoire': 45, 'Sao Tome and Principe': 45,
+            'Senegal': 45, 'Jamaica': 44, 'Kosovo': 44, 'Timor-Leste': 44,
+            'Bulgaria': 43, 'China': 43, 'Moldova': 43, 'Solomon Islands': 43,
+            'Albania': 42, 'Ghana': 42, 'Burkina Faso': 41, 'Cuba': 41,
+            'Hungary': 41, 'South Africa': 41, 'Tanzania': 41, 'Trinidad and Tobago': 41,
+            'Kazakhstan': 40, 'North Macedonia': 40, 'Suriname': 40, 'Vietnam': 40,
+            'Colombia': 39, 'Guyana': 39, 'Tunisia': 39, 'Zambia': 39,
+            'Gambia': 38, 'India': 38, 'Maldives': 38, 'Argentina': 37,
+            'Ethiopia': 37, 'Indonesia': 37, 'Lesotho': 37, 'Morocco': 37,
+            'Dominican Republic': 36, 'Serbia': 35, 'Ukraine': 35, 'Algeria': 34,
+            'Brazil': 34, 'Malawi': 34, 'Nepal': 34, 'Niger': 34, 'Thailand': 34,
+            'Turkey': 34, 'Belarus': 33, 'Bosnia and Herzegovina': 33, 'Laos': 33,
+            'Mongolia': 33, 'Panama': 33, 'Philippines': 33, 'Sierra Leone': 33,
+            'Angola': 32, 'Ecuador': 32, 'Kenya': 32, 'Sri Lanka': 32, 'Togo': 32,
+            'Uzbekistan': 32, 'Djibouti': 31, 'Papua New Guinea': 31, 'Peru': 31,
+            'Egypt': 30, 'El Salvador': 30, 'Mauritania': 30, 'Bolivia': 28,
+            'Guinea': 28, 'Eswatini': 27, 'Gabon': 27, 'Liberia': 27, 'Mali': 27,
+            'Pakistan': 27, 'Cameroon': 26, 'Iraq': 26, 'Madagascar': 26,
+            'Mexico': 26, 'Nigeria': 26, 'Uganda': 26, 'Guatemala': 25,
+            'Kyrgyzstan': 25, 'Mozambique': 25, 'Central African Republic': 24,
+            'Paraguay': 24, 'Bangladesh': 23, 'Congo': 23, 'Iran': 23,
+            'Azerbaijan': 22, 'Honduras': 22, 'Lebanon': 22, 'Russia': 22,
+            'Cambodia': 21, 'Chad': 21, 'Comoros': 21, 'Guinea-Bissau': 21,
+            'Zimbabwe': 21, 'Democratic Republic of the Congo': 20, 'Tajikistan': 19,
+            'Afghanistan': 17, 'Burundi': 17, 'Turkmenistan': 17, 'Haiti': 16,
+            'Myanmar': 16, 'North Korea': 15, 'Sudan': 15, 'Nicaragua': 14,
+            'Equatorial Guinea': 13, 'Eritrea': 13, 'Libya': 13, 'Yemen': 13,
+            'Syria': 12, 'Venezuela': 10, 'Somalia': 9, 'South Sudan': 8
+        }
+        
+        # Convert to DataFrame format
+        data = []
+        for country, score in cpi_data_2024.items():
+            # Normalize score to 0-1 scale (TI uses 0-100, higher is better)
+            normalized_score = float(score) / 100.0
+            data.append({
+                'Entity': country,
+                'Year': 2024,
+                'corruption_index': normalized_score
+            })
+        
+        result_df = pd.DataFrame(data)
+        logger.info("Loaded TI CPI data for %d countries", len(result_df))
+        return result_df
+        
+    except Exception as e:
+        logger.warning("Failed to load TI CPI data: %s", e)
+        return None
+    return None
+
+
+# RSF World Press Freedom Index 2025 CSV URL
+RSF_PRESS_FREEDOM_2025_CSV = "https://rsf.org/sites/default/files/import_classement/2025.csv"
+
+def _fetch_rsf_press_freedom_2025() -> Optional[pd.DataFrame]:
+    """Download and parse the RSF 2025 Press Freedom Index CSV."""
+    try:
+        # Try different encodings for the CSV file
+        encodings = ['utf-8', 'latin1', 'iso-8859-1', 'cp1252']
+        
+        for encoding in encodings:
+            try:
+                logger.info("Trying RSF CSV with encoding: %s", encoding)
+                df = pd.read_csv(RSF_PRESS_FREEDOM_2025_CSV, sep=';', encoding=encoding)
+                logger.info("RSF CSV loaded successfully with encoding: %s", encoding)
+                logger.info("RSF CSV shape: %s, columns: %s", df.shape, list(df.columns))
+                
+                # Check for expected columns
+                expected_cols = ['Country_EN', 'Score 2025']
+                found_cols = [col for col in expected_cols if col in df.columns]
+                logger.info("Found expected columns: %s", found_cols)
+                
+                if len(found_cols) >= 2:
+                    # Normalize column names
+                    df = df.rename(columns={
+                        "Country_EN": "Entity",
+                        "Score 2025": "press_freedom_score",
+                    })
+                    
+                    # Clean the score column (remove commas and convert to float)
+                    df["press_freedom_score"] = pd.to_numeric(
+                        df["press_freedom_score"].astype(str).str.replace(',', '.'), 
+                        errors='coerce'
+                    )
+                    df["Year"] = 2024  # Use 2024 to match main data timeframe
+                    
+                    result = df[["Entity", "Year", "press_freedom_score"]].dropna()
+                    logger.info("RSF data processed: %d countries", len(result))
+                    return result
+                    
+            except Exception as e:
+                logger.warning("RSF encoding %s failed: %s", encoding, e)
+                continue
+                
+        logger.warning("All RSF encodings failed")
+        return None
+        
+    except Exception as e:
+        logger.warning("Failed to fetch RSF press freedom data: %s", e)
+        return None
+    except Exception as e:
+        logger.warning("Failed to fetch/parse RSF Press Freedom Index: %s", e)
+        return None
 
 
 def _get_models():
@@ -339,10 +507,14 @@ def _compute_safety_index_from_homicide(last_n_years: int) -> Optional[pd.DataFr
     df = _fetch_metric_prefer_first_available(homicide_slugs)
     if (df is None or df.empty):
         # World Bank fallback: Intentional homicides (per 100,000 people)
-        wb_homicide = _fetch_worldbank_indicator("SH.STA.HOMIC.ZS")
+        wb_homicide = _fetch_worldbank_indicator("VC.IHR.PSRC.P5")
         if wb_homicide is None or wb_homicide.empty:
+            logger.warning("No homicide data found from World Bank fallback for safety_index.")
             return None
+        logger.info("Using World Bank homicide data as fallback for safety_index.")
         df = wb_homicide
+    else:
+        logger.info("Using Grapher homicide data for safety_index.")
 
     current_year = datetime.utcnow().year
     year_min = current_year - (last_n_years - 1)
@@ -354,7 +526,7 @@ def _compute_safety_index_from_homicide(last_n_years: int) -> Optional[pd.DataFr
 
     # Compute min/max per year and invert scale
     df = df.rename(columns={"value": "homicide_rate"})
-    grouped = df.groupby("Year", as_index=False)["homicide_rate"].agg(["min", "max"]).reset_index()
+    grouped = df.groupby("Year")["homicide_rate"].agg(["min", "max"]).reset_index()
     grouped.columns = ["Year", "min_rate", "max_rate"]
 
     df = pd.merge(df, grouped, on="Year", how="left")
@@ -423,12 +595,55 @@ def get_country_metrics(last_n_years: int = 10) -> pd.DataFrame:
         else:
             merged = pd.merge(merged, edu[key_cols + ["education_index"]], on=key_cols, how="outer")
 
+
     # Fallback: compute safety_index from homicide if not fetched
     if merged is not None and "safety_index" not in merged.columns:
         safety_df = _compute_safety_index_from_homicide(last_n_years=last_n_years)
         if safety_df is not None and not safety_df.empty:
             key_cols = ["Entity", "Code", "Year"]
             merged = pd.merge(merged, safety_df[key_cols + ["safety_index"]], on=key_cols, how="outer")
+
+    # Fallback: use historical Freedom House data for freedom_of_speech_index and democracy_index
+    if merged is not None:
+        fh_df = _fetch_freedom_house_historical()
+        if fh_df is not None and not fh_df.empty:
+            key_cols = ["Entity", "Year"]
+            
+            # Merge freedom_of_speech_index if missing
+            if "freedom_of_speech_index" not in merged.columns or merged["freedom_of_speech_index"].isna().all():
+                fh_freedom = fh_df[key_cols + ["freedom_of_speech_index"]].dropna()
+                merged = pd.merge(merged, fh_freedom, on=key_cols, how="left", suffixes=('', '_fh'))
+                if "freedom_of_speech_index_fh" in merged.columns:
+                    merged["freedom_of_speech_index"] = merged["freedom_of_speech_index"].fillna(merged["freedom_of_speech_index_fh"])
+                    merged = merged.drop(columns=["freedom_of_speech_index_fh"])
+            
+            # Merge democracy_index if missing  
+            if "democracy_index" not in merged.columns or merged["democracy_index"].isna().all():
+                fh_democracy = fh_df[key_cols + ["democracy_index"]].dropna()
+                merged = pd.merge(merged, fh_democracy, on=key_cols, how="left", suffixes=('', '_fh'))
+                if "democracy_index_fh" in merged.columns:
+                    merged["democracy_index"] = merged["democracy_index"].fillna(merged["democracy_index_fh"])
+                    merged = merged.drop(columns=["democracy_index_fh"])
+
+    # Fallback: use Transparency International CPI for corruption_index
+    if merged is not None and ("corruption_index" not in merged.columns or merged["corruption_index"].isna().all()):
+        ti_df = _fetch_transparency_international_historical()
+        if ti_df is not None and not ti_df.empty:
+            key_cols = ["Entity", "Year"]
+            merged = pd.merge(merged, ti_df[key_cols + ["corruption_index"]], on=key_cols, how="left", suffixes=('', '_ti'))
+            if "corruption_index_ti" in merged.columns:
+                merged["corruption_index"] = merged["corruption_index"].fillna(merged["corruption_index_ti"])
+                merged = merged.drop(columns=["corruption_index_ti"])
+
+    # Fallback: use RSF Press Freedom Index for freedom_of_speech_index if not fetched
+    if merged is not None and ("freedom_of_speech_index" not in merged.columns or merged["freedom_of_speech_index"].isna().all()):
+        rsf_df = _fetch_rsf_press_freedom_2025()
+        if rsf_df is not None and not rsf_df.empty:
+            # Map RSF score to freedom_of_speech_index (normalize 0-100 to 0-1, invert: higher score = more freedom)
+            rsf_df = rsf_df.rename(columns={"press_freedom_score": "freedom_of_speech_index"})
+            rsf_df["freedom_of_speech_index"] = rsf_df["freedom_of_speech_index"] / 100.0
+            key_cols = ["Entity", "Year"]
+            merged = pd.merge(merged, rsf_df[key_cols + ["freedom_of_speech_index"]], on=["Entity", "Year"], how="left")
 
     if merged is None:
         # Return empty DataFrame with expected columns
