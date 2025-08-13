@@ -190,10 +190,10 @@ def _fetch_transparency_international_historical() -> Optional[pd.DataFrame]:
             'Syria': 12, 'Venezuela': 10, 'Somalia': 9, 'South Sudan': 8
         }
         
-        # Convert to DataFrame format
+     
         data = []
         for country, score in cpi_data_2024.items():
-            # Normalize score to 0-1 scale (TI uses 0-100, higher is better)
+            
             normalized_score = float(score) / 100.0
             data.append({
                 'Entity': country,
