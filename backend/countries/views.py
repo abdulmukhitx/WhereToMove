@@ -12,7 +12,7 @@ from .services import (
 
 
 CACHE_KEY_ALL = "country_metrics:{years}:{code}"
-CACHE_TIMEOUT = 60 * 60  # 1 hour
+CACHE_TIMEOUT = 60 * 60 
 
 
 def _sanitize_records_for_json(data):
