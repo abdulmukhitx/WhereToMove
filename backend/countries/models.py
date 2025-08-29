@@ -2,11 +2,11 @@ from django.db import models
 
 
 class Country(models.Model):
-    """A country identified by ISO-3 code."""
-    code = models.CharField(max_length=3, unique=True, db_index=True)
+   
+    code = models.CharField(max_length=4, unique=True, db_index=True)
     name = models.CharField(max_length=255)
 
-    def __str__(self) -> str:  # pragma: no cover
+    def __str__(self) -> str: 
         return f"{self.code} - {self.name}"
 
 
@@ -15,7 +15,6 @@ class CountryMetric(models.Model):
     country = models.ForeignKey(Country, on_delete=models.CASCADE, related_name="metrics")
     year = models.IntegerField(db_index=True)
 
-    # Metrics (all optional)
     gdp_ppp_per_capita = models.FloatField(null=True, blank=True)
     life_expectancy = models.FloatField(null=True, blank=True)
     education_index = models.FloatField(null=True, blank=True)
@@ -35,5 +34,5 @@ class CountryMetric(models.Model):
             models.Index(fields=["country", "year"], name="idx_country_year"),
         ]
 
-    def __str__(self) -> str:  # pragma: no cover
+    def __str__(self) -> str: 
         return f"{self.country.name} {self.year}"
